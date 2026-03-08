@@ -1,0 +1,119 @@
+import streamlit as st
+from groq import Groq
+import time
+from fpdf import FPDF
+import sqlite3
+from datetime import datetime
+
+# --- 1. CONFIGURAÇÃO E DESIGN ---
+st.set_page_config(page_title="SQL NEXUS PRO", page_icon="🛡️", layout="wide")
+
+st.markdown("""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&display=swap');
+    
+    .main { background-color: #0a0a0c; color: #e2e8f0; }
+    [data-testid="stSidebar"] { background-color: #0d0d0f !important; border-right: 1px solid #1e293b; }
+    
+    /* TITULOS */
+    .gradient-text {
+        background: linear-gradient(90deg, #10b981, #3b82f6);
+        -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+        font-weight: 800; font-size: 2.5rem;
+    }
+
+    /* EDITOR DE SQL - ALTO CONTRASTE */
+    .stTextArea textarea {
+        background-color: #010409 !important;
+        color: #ffffff !important; /* Branco puro para máxima leitura */
+        border: 2px solid #30363d !important;
+        border-radius: 12px !important;
+        font-family: 'Fira Code', monospace !important;
+        font-size: 16px !important;
+    }
+    .stTextArea textarea::placeholder { color: #8b949e !important; }
+
+    /* BOTÕES PRO */
+    .stButton>button {
+        background: linear-gradient(45deg, #059669, #10b981) !important;
+        color: white !important; font-weight: bold !important;
+        border: none !important; padding: 12px !important;
+        box-shadow: 0 4px 15px rgba(16, 185, 129, 0.2) !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+# --- 2. LÓGICA DE LOGIN ---
+if "authenticated" not in st.session_state:
+    st.session_state["authenticated"] = False
+
+if not st.session_state["authenticated"]:
+    c1, c2, c3 = st.columns([1,2,1])
+    with c2:
+        st.markdown("<br><br>", unsafe_allow_html=True)
+        st.markdown("<div style='text-align:center'>", unsafe_allow_html=True)
+        st.markdown("<h1 style='color:#10b981'>🛡️ SQL NEXUS LOGIN</h1>", unsafe_allow_html=True)
+        key = st.text_input("Insira sua Chave de Acesso:", type="password")
+        if st.button("DESCRIPTOGRAFAR ACESSO"):
+            if key == "NEXUS-PRO-2026": # Sua senha de venda
+                st.session_state["authenticated"] = True
+                st.rerun()
+            else:
+                st.error("Chave inválida. Adquira seu acesso em @seulink")
+        st.markdown("</div>", unsafe_allow_html=True)
+    st.stop()
+
+# --- 3. FUNÇÕES DE APOIO (DB e PDF) ---
+def init_db():
+    conn = sqlite3.connect('nexus.db')
+    conn.execute('CREATE TABLE IF NOT EXISTS h (dt TEXT, q TEXT, r TEXT)')
+    conn.close()
+
+def save(q, r):
+    conn = sqlite3.connect('nexus.db')
+    conn.execute('INSERT INTO h VALUES (?,?,?)', (datetime.now().strftime("%d/%m %H:%M"), q, r))
+    conn.commit()
+    conn.close()
+
+init_db()
+
+# --- 4. SIDEBAR ---
+with st.sidebar:
+    st.markdown("<h2 style='color:white'>SQL NEXUS <span style='color:#10b981'>PRO</span></h2>", unsafe_allow_html=True)
+    menu = st.radio("Menu:", ["🧠 Oráculo IA", "📜 Meus Estudos", "💎 Upgrade/Suporte"])
+    if st.button("Sair"):
+        st.session_state["authenticated"] = False
+        st.rerun()
+
+# --- 5. INTERFACE PRINCIPAL ---
+if menu == "🧠 Oráculo IA":
+    st.markdown("<h2 class='gradient-text'>O Oráculo SQL</h2>", unsafe_allow_html=True)
+    q_in = st.text_area("Descreva seu problema ou cole a query:", height=250)
+    
+    if st.button("⚡ ANALISAR AGORA"):
+        if q_in:
+            with st.spinner("IA Processando..."):
+                client = Groq(api_key="SUA_CHAVE_AQUI")
+                res = client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=[{"role": "system", "content": "DBA Senior. Analise SARGability e índices."},
+                              {"role": "user", "content": q_in}]
+                ).choices[0].message.content
+                save(q_in, res)
+                st.success("Análise Concluída!")
+                st.markdown(res)
+        else: st.warning("Insira uma consulta.")
+
+elif menu == "📜 Meus Estudos":
+    st.markdown("<h2 class='gradient-text'>Seu Histórico</h2>", unsafe_allow_html=True)
+    conn = sqlite3.connect('nexus.db')
+    logs = conn.execute('SELECT * FROM h ORDER BY dt DESC').fetchall()
+    for dt, q, r in logs:
+        with st.expander(f"📅 {dt} | {q[:30]}..."):
+            st.code(q, language='sql')
+            st.write(r)
+
+elif menu == "💎 Upgrade/Suporte":
+    st.markdown("<h2 class='gradient-text'>Área do Assinante</h2>", unsafe_allow_html=True)
+    st.info("Sua assinatura PRO está ativa até 08/04/2026.")
+    st.write("Dúvidas? Entre em contato: suporte@sqlnexus.com")
