@@ -86,7 +86,7 @@ if menu == "🧠 Oráculo IA":
     if st.button("⚡ ANALISAR"):
         if q_in:
             with st.spinner("Analisando..."):
-                client = Groq(api_key="SUA_CHAVE_AQUI")
+                client = Groq(api_key="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")
                 res = client.chat.completions.create(
                     model="llama-3.3-70b-versatile",
                     messages=[{"role": "user", "content": f"DBA Senior, analise: {q_in}"}]
