@@ -5,14 +5,14 @@ from datetime import datetime
 from fpdf import FPDF
 import streamlit.components.v1 as components
 
-# --- 1. CONFIGURAÇÃO ---
+# --- 1. CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="SQL NEXUS PRO", page_icon="🛡️", layout="wide")
 
-# 🔐 BUSCA CHAVE NOS SECRETS (Protege contra bloqueio do GitHub)
+# 🔐 SEGURANÇA: Busca a chave nos Secrets (Nuvem)
 CHAVE_GROQ = st.secrets.get("GROQ_API_KEY", "")
 
-# --- 2. BANCO DE DADOS ---
-db_path = os.path.join(os.path.dirname(__file__), 'nexus_final_v6.db')
+# --- 2. BANCO DE DADOS (Persistência) ---
+db_path = os.path.join(os.path.dirname(__file__), 'nexus_final_v7.db')
 
 def init_db():
     conn = sqlite3.connect(db_path)
@@ -28,15 +28,16 @@ def salvar(q, r):
 
 init_db()
 
-# --- 3. UTILITÁRIOS ---
+# --- 3. UTILITÁRIOS (PDF E CÓPIA) ---
 def gerar_pdf(query, analise):
     pdf = FPDF()
     pdf.add_page()
-    pdf.set_font("helvetica", 'B', 16); pdf.cell(0, 10, "SQL NEXUS - RELATORIO", ln=True, align='C'); pdf.ln(10)
-    pdf.set_font("helvetica", 'B', 12); pdf.cell(0, 10, "Query:", ln=True)
+    pdf.set_font("helvetica", 'B', 16); pdf.cell(0, 10, "SQL NEXUS - RELATORIO TECNICO", ln=True, align='C'); pdf.ln(10)
+    pdf.set_font("helvetica", 'B', 12); pdf.cell(0, 10, "Query Analisada:", ln=True)
     pdf.set_font("courier", size=10); pdf.multi_cell(0, 8, query); pdf.ln(5)
-    pdf.set_font("helvetica", 'B', 12); pdf.cell(0, 10, "Analise:", ln=True)
+    pdf.set_font("helvetica", 'B', 12); pdf.cell(0, 10, "Analise do Oraculo:", ln=True)
     pdf.set_font("helvetica", size=11)
+    # Limpeza básica para evitar erros de codificação no PDF
     clean = analise.replace('`', '').encode('latin-1', 'ignore').decode('latin-1')
     pdf.multi_cell(0, 7, clean)
     return bytes(pdf.output())
@@ -54,24 +55,67 @@ def botao_copiar(texto):
     """
     components.html(js, height=45)
 
+# --- 4. CALLBACK FORMATADOR ---
 def format_callback():
     if st.session_state.sql_input:
         st.session_state.sql_input = sqlparse.format(st.session_state.sql_input, reindent=True, keyword_case='upper')
 
-# --- 4. INTERFACE ---
-with st.sidebar:
-    st.title("🛡️ SQL NEXUS PRO")
-    menu = st.radio("Menu:", ["🧠 Oráculo", "📜 Histórico"])
-    if st.button("Sair"): st.session_state.clear(); st.rerun()
+# --- 5. LOGIN ---
+if "auth" not in st.session_state: st.session_state["auth"] = False
+if not st.session_state["auth"]:
+    st.markdown("<h1 style='text-align:center; color:#10b981;'>🛡️ LOGIN SQL NEXUS PRO</h1>", unsafe_allow_html=True)
+    col1, col2, col3 = st.columns([1,2,1])
+    with col2:
+        chave = st.text_input("Chave de Acesso:", type="password")
+        if st.button("DESCRIPTOGRAFAR"):
+            if chave == "NEXUS-PRO-2026": st.session_state["auth"] = True; st.rerun()
+            else: st.error("Chave inválida.")
+    st.stop()
 
+# --- 6. MENU LATERAL (Gamificação integrada) ---
+with st.sidebar:
+    st.markdown("<h2 style='color:#10b981'>SQL NEXUS PRO</h2>", unsafe_allow_html=True)
+    menu = st.radio("Menu:", ["🧠 Oráculo", "🧪 Laboratório", "📜 Histórico"])
+    
+    # --- DASHBOARD DE NÍVEL ---
+    st.markdown("---")
+    try:
+        conn = sqlite3.connect(db_path)
+        total = conn.execute('SELECT COUNT(*) FROM h').fetchone()[0]
+        conn.close()
+    except: total = 0
+
+    ranks = ["Iniciante", "DBA Júnior", "DBA Pleno", "DBA Sênior", "Nexus Legend"]
+    idx = min(total // 5, len(ranks) - 1)
+    progresso = (total % 5) / 5 if idx < len(ranks) - 1 else 1.0
+
+    st.subheader(f"🏆 Nível: {ranks[idx]}")
+    st.progress(progresso)
+    st.caption(f"📊 {total} consultas realizadas")
+    
+    st.markdown("---")
+    if st.button("🚪 Sair"): st.session_state.clear(); st.rerun()
+
+# --- 7. PÁGINAS ---
+
+# PÁGINA: ORÁCULO
 if menu == "🧠 Oráculo":
     st.markdown("<h1 style='color:#58a6ff;'>O Oráculo</h1>", unsafe_allow_html=True)
     
-    col1, col2 = st.columns(2)
-    with col1:
+    # GUIA DE BOAS PRÁTICAS (Popover)
+    with st.popover("📖 GUIA: Como falar com o Oráculo?"):
+        st.markdown("""
+        ### 🚀 Para extrair o melhor da IA:
+        **1. No Contexto (DDL):** Cole o `CREATE TABLE`. Isso ajuda a IA a ver índices e evitar custos altos.
+        **2. Nas Regras de Negócio:** Seja específico! Ex: *"Ignore pedidos cancelados"* ou *"Calcule 10% de taxa"*.
+        **3. No Envio:** Use **Ctrl + Enter** para aplicar o texto nos campos grandes.
+        """)
+
+    col_ctx1, col_ctx2 = st.columns(2)
+    with col_ctx1:
         with st.expander("📂 SCHEMA CONTEXT (DDL)"):
-            ddl = st.text_area("Cole o CREATE TABLE aqui:", height=100, key="ddl_ctx")
-    with col2:
+            ddl = st.text_area("Cole o CREATE TABLE aqui:", height=100, key="ddl_input")
+    with col_ctx2:
         with st.expander("⚖️ REGRAS DE NEGÓCIO"):
             regras = st.text_area("Ex: Pedidos excluídos não devem aparecer...", height=100, key="biz_rules")
 
@@ -81,15 +125,15 @@ if menu == "🧠 Oráculo":
     if st.button("⚡ ANALISAR AGORA", use_container_width=True):
         if st.session_state.sql_input:
             if not CHAVE_GROQ:
-                st.error("Configure a 'GROQ_API_KEY' nos Secrets do Streamlit!")
+                st.error("Erro: API Key não configurada nos Secrets!")
             else:
-                with st.spinner("IA Analisando..."):
+                with st.spinner("O Oráculo está processando..."):
                     try:
                         client = Groq(api_key=CHAVE_GROQ)
                         res = client.chat.completions.create(
                             model="llama-3.3-70b-versatile",
                             messages=[
-                                {"role": "system", "content": "DBA Senior. Responda em blocos ```sql."},
+                                {"role": "system", "content": "Voce e um DBA Senior. Responda em blocos ```sql."},
                                 {"role": "user", "content": f"Schema:\n{ddl}\nRegras:\n{regras}\nQuery:\n{st.session_state.sql_input}"}
                             ]
                         ).choices[0].message.content
@@ -99,17 +143,38 @@ if menu == "🧠 Oráculo":
                         st.download_button("📥 PDF", data=gerar_pdf(st.session_state.sql_input, res), file_name="analise.pdf")
                     except Exception as e: st.error(f"Erro: {e}")
 
+# PÁGINA: LABORATÓRIO
+elif menu == "🧪 Laboratório":
+    st.title("🧪 Laboratório de Performance")
+    c1, c2 = st.columns(2)
+    with c1: q1 = st.text_area("Versão A:", height=200, key="la")
+    with c2: q2 = st.text_area("Versão B:", height=200, key="lb")
+    if st.button("⚖️ COMPARAR PERFORMANCE", use_container_width=True):
+        if q1 and q2:
+            with st.spinner("Analisando..."):
+                client = Groq(api_key=CHAVE_GROQ)
+                comp = client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=[{"role": "user", "content": f"Compare a performance técnica de A e B:\nA: {q1}\nB: {q2}"}]
+                ).choices[0].message.content
+                st.success(comp); botao_copiar(comp)
+
+# PÁGINA: HISTÓRICO
 elif menu == "📜 Histórico":
-    st.title("Histórico")
+    st.title("📜 Histórico de Consultas")
     if st.button("🗑️ ZERAR TUDO"):
         if os.path.exists(db_path): os.remove(db_path); init_db(); st.rerun()
 
     conn = sqlite3.connect(db_path)
     logs = conn.execute('SELECT id, dt, q, r FROM h ORDER BY id DESC').fetchall()
     conn.close()
+    
     for id_reg, d, q, r in logs:
         with st.expander(f"📅 {d} | {q[:30]}..."):
             st.code(q, language='sql'); st.markdown(r)
-            if st.button("🗑️", key=f"del_{id_reg}"):
-                conn = sqlite3.connect(db_path); conn.execute('DELETE FROM h WHERE id = ?', (id_reg,))
-                conn.commit(); conn.close(); st.rerun()
+            c_c, c_d = st.columns([4, 1])
+            with c_c: botao_copiar(r)
+            with c_d:
+                if st.button("🗑️", key=f"del_{id_reg}"):
+                    conn = sqlite3.connect(db_path); conn.execute('DELETE FROM h WHERE id = ?', (id_reg,))
+                    conn.commit(); conn.close(); st.rerun()
