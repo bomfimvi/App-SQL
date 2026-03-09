@@ -1,180 +1,146 @@
 import streamlit as st
 from groq import Groq
-import sqlite3, sqlparse, os
+import psycopg2, sqlparse, os, hashlib
 from datetime import datetime
 from fpdf import FPDF
 import streamlit.components.v1 as components
 
-# --- 1. CONFIGURAÇÃO DA PÁGINA ---
+# --- 1. CONFIGURAÇÃO ---
 st.set_page_config(page_title="SQL NEXUS PRO", page_icon="🛡️", layout="wide")
 
-# 🔐 SEGURANÇA: Busca a chave nos Secrets (Nuvem)
+# 🔐 SEGURANÇA: Chaves nos Secrets
 CHAVE_GROQ = st.secrets.get("GROQ_API_KEY", "")
+DB_URL = st.secrets.get("DATABASE_URL", "") # Vamos configurar isso no Streamlit Cloud
 
-# --- 2. BANCO DE DADOS (Persistência) ---
-db_path = os.path.join(os.path.dirname(__file__), 'nexus_final_v7.db')
+# --- 2. CONEXÃO COM BANCO EXTERNO ---
+def get_connection():
+    return psycopg2.connect(DB_URL)
 
 def init_db():
-    conn = sqlite3.connect(db_path)
-    conn.execute('CREATE TABLE IF NOT EXISTS h (id INTEGER PRIMARY KEY AUTOINCREMENT, dt TEXT, q TEXT, r TEXT)')
-    conn.close()
-
-def salvar(q, r):
-    conn = sqlite3.connect(db_path)
-    dt = datetime.now().strftime("%d/%m %H:%M")
-    conn.execute('INSERT INTO h (dt, q, r) VALUES (?,?,?)', (dt, q, r))
+    conn = get_connection()
+    cur = conn.cursor()
+    # Tabela de Usuários
+    cur.execute('''CREATE TABLE IF NOT EXISTS users 
+                 (id SERIAL PRIMARY KEY, username TEXT UNIQUE, password TEXT)''')
+    # Tabela de Histórico
+    cur.execute('''CREATE TABLE IF NOT EXISTS h 
+                 (id SERIAL PRIMARY KEY, user_id INTEGER, dt TEXT, q TEXT, r TEXT)''')
     conn.commit()
+    cur.close()
     conn.close()
 
-init_db()
+def make_hash(password):
+    return hashlib.sha256(str.encode(password)).hexdigest()
 
-# --- 3. UTILITÁRIOS (PDF E CÓPIA) ---
-def gerar_pdf(query, analise):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("helvetica", 'B', 16); pdf.cell(0, 10, "SQL NEXUS - RELATORIO TECNICO", ln=True, align='C'); pdf.ln(10)
-    pdf.set_font("helvetica", 'B', 12); pdf.cell(0, 10, "Query Analisada:", ln=True)
-    pdf.set_font("courier", size=10); pdf.multi_cell(0, 8, query); pdf.ln(5)
-    pdf.set_font("helvetica", 'B', 12); pdf.cell(0, 10, "Analise do Oraculo:", ln=True)
-    pdf.set_font("helvetica", size=11)
-    # Limpeza básica para evitar erros de codificação no PDF
-    clean = analise.replace('`', '').encode('latin-1', 'ignore').decode('latin-1')
-    pdf.multi_cell(0, 7, clean)
-    return bytes(pdf.output())
+def check_login(user, pwd):
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute('SELECT id FROM users WHERE username = %s AND password = %s', (user, make_hash(pwd)))
+    res = cur.fetchone()
+    cur.close()
+    conn.close()
+    return res[0] if res else None
 
-def botao_copiar(texto):
-    id_btn = f"btn_{hash(texto)}"
-    js = f"""
-        <button id="{id_btn}" style="background:#10b981; color:white; border:none; padding:8px 15px; border-radius:5px; cursor:pointer; font-weight:bold; width:100%;">📋 COPIAR RESULTADO</button>
-        <script>
-        document.getElementById("{id_btn}").onclick = function() {{
-            const t = `{texto.replace('`', '\\`').replace('$', '\\$')}`;
-            navigator.clipboard.writeText(t).then(() => alert("✅ Copiado!"));
-        }};
-        </script>
-    """
-    components.html(js, height=45)
+def register_user(user, pwd):
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute('INSERT INTO users (username, password) VALUES (%s,%s)', (user, make_hash(pwd)))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return True
+    except: return False
 
-# --- 4. CALLBACK FORMATADOR ---
-def format_callback():
-    if st.session_state.sql_input:
-        st.session_state.sql_input = sqlparse.format(st.session_state.sql_input, reindent=True, keyword_case='upper')
+def salvar_historico(user_id, q, r):
+    conn = get_connection()
+    cur = conn.cursor()
+    dt = datetime.now().strftime("%d/%m %H:%M")
+    cur.execute('INSERT INTO h (user_id, dt, q, r) VALUES (%s,%s,%s,%s)', (user_id, dt, q, r))
+    conn.commit()
+    cur.close()
+    conn.close()
 
-# --- 5. LOGIN ---
-if "auth" not in st.session_state: st.session_state["auth"] = False
-if not st.session_state["auth"]:
-    st.markdown("<h1 style='text-align:center; color:#10b981;'>🛡️ LOGIN SQL NEXUS PRO</h1>", unsafe_allow_html=True)
-    col1, col2, col3 = st.columns([1,2,1])
-    with col2:
-        chave = st.text_input("Chave de Acesso:", type="password")
-        if st.button("DESCRIPTOGRAFAR"):
-            if chave == "NEXUS-PRO-2026": st.session_state["auth"] = True; st.rerun()
-            else: st.error("Chave inválida.")
+if DB_URL: init_db()
+
+# --- 3. TELA DE LOGIN ---
+if "user_id" not in st.session_state:
+    st.markdown("<h1 style='text-align:center; color:#10b981;'>🛡️ SQL NEXUS PRO</h1>", unsafe_allow_html=True)
+    if not DB_URL:
+        st.error("Configure a DATABASE_URL nos Secrets para continuar.")
+        st.stop()
+    
+    aba_log, aba_reg = st.tabs(["Acessar Conta", "Criar Nova Conta"])
+    with aba_log:
+        u = st.text_input("Usuário:", key="u_log")
+        p = st.text_input("Senha:", type="password", key="p_log")
+        if st.button("ENTRAR"):
+            uid = check_login(u, p)
+            if uid:
+                st.session_state["user_id"] = uid
+                st.session_state["username"] = u
+                st.rerun()
+            else: st.error("Usuário ou senha incorretos.")
+
+    with aba_reg:
+        new_u = st.text_input("Escolha um Usuário:", key="u_reg")
+        new_p = st.text_input("Escolha uma Senha:", type="password", key="p_reg")
+        if st.button("CADASTRAR"):
+            if register_user(new_u, new_p):
+                st.success("Conta criada! Vá na aba 'Acessar'.")
+            else: st.error("Erro ao criar conta (usuário já existe).")
     st.stop()
 
-# --- 6. MENU LATERAL (Gamificação integrada) ---
+# --- 4. INTERFACE PRINCIPAL ---
 with st.sidebar:
-    st.markdown("<h2 style='color:#10b981'>SQL NEXUS PRO</h2>", unsafe_allow_html=True)
-    menu = st.radio("Menu:", ["🧠 Oráculo", "🧪 Laboratório", "📜 Histórico"])
+    st.markdown(f"👤 **Olá, {st.session_state['username']}**")
+    menu = st.radio("Menu:", ["🧠 Oráculo", "🧪 Laboratório", "📜 Meu Histórico"])
     
-    # --- DASHBOARD DE NÍVEL ---
-    st.markdown("---")
-    try:
-        conn = sqlite3.connect(db_path)
-        total = conn.execute('SELECT COUNT(*) FROM h').fetchone()[0]
-        conn.close()
-    except: total = 0
-
-    ranks = ["Iniciante", "DBA Júnior", "DBA Pleno", "DBA Sênior", "Nexus Legend"]
-    idx = min(total // 5, len(ranks) - 1)
-    progresso = (total % 5) / 5 if idx < len(ranks) - 1 else 1.0
-
-    st.subheader(f"🏆 Nível: {ranks[idx]}")
-    st.progress(progresso)
-    st.caption(f"📊 {total} consultas realizadas")
-    
-    st.markdown("---")
-    if st.button("🚪 Sair"): st.session_state.clear(); st.rerun()
-
-# --- 7. PÁGINAS ---
-
-# PÁGINA: ORÁCULO
-if menu == "🧠 Oráculo":
-    st.markdown("<h1 style='color:#58a6ff;'>O Oráculo</h1>", unsafe_allow_html=True)
-    
-    # GUIA DE BOAS PRÁTICAS (Popover)
-    with st.popover("📖 GUIA: Como falar com o Oráculo?"):
-        st.markdown("""
-        ### 🚀 Para extrair o melhor da IA:
-        **1. No Contexto (DDL):** Cole o `CREATE TABLE`. Isso ajuda a IA a ver índices e evitar custos altos.
-        **2. Nas Regras de Negócio:** Seja específico! Ex: *"Ignore pedidos cancelados"* ou *"Calcule 10% de taxa"*.
-        **3. No Envio:** Use **Ctrl + Enter** para aplicar o texto nos campos grandes.
-        """)
-
-    col_ctx1, col_ctx2 = st.columns(2)
-    with col_ctx1:
-        with st.expander("📂 SCHEMA CONTEXT (DDL)"):
-            ddl = st.text_area("Cole o CREATE TABLE aqui:", height=100, key="ddl_input")
-    with col_ctx2:
-        with st.expander("⚖️ REGRAS DE NEGÓCIO"):
-            regras = st.text_area("Ex: Pedidos excluídos não devem aparecer...", height=100, key="biz_rules")
-
-    st.text_area("Sua Query SQL:", height=200, key="sql_input")
-    st.button("🪄 FORMATAR SQL", on_click=format_callback)
-    
-    if st.button("⚡ ANALISAR AGORA", use_container_width=True):
-        if st.session_state.sql_input:
-            if not CHAVE_GROQ:
-                st.error("Erro: API Key não configurada nos Secrets!")
-            else:
-                with st.spinner("O Oráculo está processando..."):
-                    try:
-                        client = Groq(api_key=CHAVE_GROQ)
-                        res = client.chat.completions.create(
-                            model="llama-3.3-70b-versatile",
-                            messages=[
-                                {"role": "system", "content": "Voce e um DBA Senior. Responda em blocos ```sql."},
-                                {"role": "user", "content": f"Schema:\n{ddl}\nRegras:\n{regras}\nQuery:\n{st.session_state.sql_input}"}
-                            ]
-                        ).choices[0].message.content
-                        salvar(st.session_state.sql_input, res)
-                        st.markdown(res)
-                        botao_copiar(res)
-                        st.download_button("📥 PDF", data=gerar_pdf(st.session_state.sql_input, res), file_name="analise.pdf")
-                    except Exception as e: st.error(f"Erro: {e}")
-
-# PÁGINA: LABORATÓRIO
-elif menu == "🧪 Laboratório":
-    st.title("🧪 Laboratório de Performance")
-    c1, c2 = st.columns(2)
-    with c1: q1 = st.text_area("Versão A:", height=200, key="la")
-    with c2: q2 = st.text_area("Versão B:", height=200, key="lb")
-    if st.button("⚖️ COMPARAR PERFORMANCE", use_container_width=True):
-        if q1 and q2:
-            with st.spinner("Analisando..."):
-                client = Groq(api_key=CHAVE_GROQ)
-                comp = client.chat.completions.create(
-                    model="llama-3.3-70b-versatile",
-                    messages=[{"role": "user", "content": f"Compare a performance técnica de A e B:\nA: {q1}\nB: {q2}"}]
-                ).choices[0].message.content
-                st.success(comp); botao_copiar(comp)
-
-# PÁGINA: HISTÓRICO
-elif menu == "📜 Histórico":
-    st.title("📜 Histórico de Consultas")
-    if st.button("🗑️ ZERAR TUDO"):
-        if os.path.exists(db_path): os.remove(db_path); init_db(); st.rerun()
-
-    conn = sqlite3.connect(db_path)
-    logs = conn.execute('SELECT id, dt, q, r FROM h ORDER BY id DESC').fetchall()
+    # Gamificação persistente
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute('SELECT COUNT(*) FROM h WHERE user_id = %s', (st.session_state["user_id"],))
+    total = cur.fetchone()[0]
+    cur.close()
     conn.close()
     
-    for id_reg, d, q, r in logs:
+    st.progress(min((total % 10) * 10, 100))
+    st.caption(f"Nível de DBA: { (total // 10) + 1 }")
+    if st.button("🚪 Sair"):
+        del st.session_state["user_id"]
+        st.rerun()
+
+# --- PÁGINAS ---
+if menu == "🧠 Oráculo":
+    st.title("O Oráculo")
+    with st.popover("📖 Guia de Uso"):
+        st.write("Dê o DDL e as Regras de Negócio para o Oráculo.")
+
+    ddl = st.text_area("DDL Context:", height=100)
+    regras = st.text_area("Regras de Negócio:", height=100)
+    query = st.text_area("Sua Query SQL:", height=150)
+
+    if st.button("⚡ ANALISAR", use_container_width=True):
+        if query and CHAVE_GROQ:
+            with st.spinner("O Oráculo está pensando..."):
+                client = Groq(api_key=CHAVE_GROQ)
+                res = client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=[{"role": "user", "content": f"Schema:\n{ddl}\nRegras:\n{regras}\nAnalise: {query}"}]
+                ).choices[0].message.content
+                salvar_historico(st.session_state["user_id"], query, res)
+                st.markdown(res)
+
+elif menu == "📜 Meu Histórico":
+    st.title("Meu Histórico Privado")
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute('SELECT dt, q, r FROM h WHERE user_id = %s ORDER BY id DESC', (st.session_state["user_id"],))
+    logs = cur.fetchall()
+    cur.close()
+    conn.close()
+    
+    for d, q, r in logs:
         with st.expander(f"📅 {d} | {q[:30]}..."):
-            st.code(q, language='sql'); st.markdown(r)
-            c_c, c_d = st.columns([4, 1])
-            with c_c: botao_copiar(r)
-            with c_d:
-                if st.button("🗑️", key=f"del_{id_reg}"):
-                    conn = sqlite3.connect(db_path); conn.execute('DELETE FROM h WHERE id = ?', (id_reg,))
-                    conn.commit(); conn.close(); st.rerun()
+            st.code(q, language='sql')
+            st.markdown(r)
