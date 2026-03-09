@@ -9,7 +9,8 @@ import streamlit.components.v1 as components
 st.set_page_config(page_title="SQL NEXUS PRO", page_icon="🛡️", layout="wide")
 
 # BUSCA CHAVE (Local ou Cloud)
-CHAVE = st.secrets.get("GROQ_API_KEY", "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")
+# No topo do seu App.py, procure a linha da chave e mude para:
+CHAVE_GROQ = st.secrets.get("GROQ_API_KEY", "")
 
 # --- BANCO DE DADOS ---
 db_path = os.path.join(os.path.dirname(__file__), 'nexus_final_v5.db')
